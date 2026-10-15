@@ -21,11 +21,6 @@
         : undefined;
   $: createParentId = currentBoard && currentBoard.kind === 'canvas' ? currentBoard.id : (root?.id ?? null);
 
-  function isActive(board: Board): boolean {
-    if ($pageStore.view === 'home') return board.parentId === null;
-    return $pageStore.view === 'board' && $pageStore.id === board.id;
-  }
-
   function openNewMenu(event: MouseEvent): void {
     openContextMenu(event, [
       { label: 'New board', icon: 'bx bx-layout', action: () => void newBoard('canvas', createParentId) },
@@ -49,15 +44,17 @@
   </button>
 {/snippet}
 
-{#snippet boardButton(board: Board)}
+{#snippet boardButton(board: Board, activeId: string | undefined)}
+  {@const active = board.id === activeId}
   {@const isRoot = board.parentId === null}
   {@const child = board.kind === 'document' ? 'Journal' : `${board.items.length} items`}
   <div class="flex justify-center">
     <button
-      class="flex h-10 w-10 items-center justify-center rounded-lg text-xl transition-colors {isActive(board)
+      class="flex h-10 w-10 items-center justify-center rounded-lg text-xl transition-colors {active
         ? 'bg-[var(--color-accent)]/20 text-white'
         : 'bg-white/5 text-zinc-300'} hover:bg-white/10 hover:text-white"
       aria-label={board.title || 'Untitled'}
+      aria-current={active ? 'page' : undefined}
       onclick={() => (isRoot ? goHome() : openBoard(board.id))}
       oncontextmenu={(e) => boardMenu(e, board, isRoot)}
       onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, board.title || 'Untitled', child)}
@@ -78,7 +75,7 @@
   <div class="relative mt-2 flex min-h-0 flex-1 flex-col">
     <div use:overlayScrollbar={{ enabled: true }} class="journal-overlay-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-4">
       {#each $boardsStore as board (board.id)}
-        <div animate:flip={{ duration: 160 }}>{@render boardButton(board)}</div>
+        <div animate:flip={{ duration: 160 }}>{@render boardButton(board, currentBoard?.id)}</div>
       {/each}
     </div>
   </div>

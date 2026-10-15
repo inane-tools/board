@@ -1,4 +1,6 @@
 <script lang="ts">
+  import TagChips from '$lib/ui/components/TagChips.svelte';
+  import { editBoardDetails } from '$lib/app/services/boardEditor';
   import { tick } from 'svelte';
   import type { Block, BlockType, Board } from '$lib/core/board';
   import { BLOCK_LABELS, BLOCK_TYPES } from '$lib/core/board';
@@ -9,11 +11,9 @@
     removeBlock,
     reorderBlock,
     updateBlock,
-    updateBoard,
   } from '$lib/app/services/library';
   import { goHome } from '$lib/app/services/navigation';
   import { openContextMenu, openContextMenuAt, type ContextMenuItem } from '$lib/app/services/contextMenu';
-  import { showPrompt } from '$lib/app/services/dialogs';
   import { imageFromClipboard, pickImageFile, readImageFile } from '$lib/app/services/images';
   import { toggleFavorite } from '$lib/app/services/library';
   import { settingsStore } from '$lib/app/services/settings';
@@ -27,12 +27,10 @@
   };
   $: fontFamily = FONT_FAMILIES[$settingsStore.editorFont] ?? FONT_FAMILIES.sans;
 
-  const EMOJIS = ['📓', '📔', '🌙', '☀️', '🌿', '💡', '🎯', '❤️', '🔥', '🧠', '✨', '🎨', '📝', '🗓️', '⭐', '🌊'];
 
   $: board = $boardsStore.find((j) => j.id === id) as Board | undefined;
   $: blocks = board?.blocks ?? [];
 
-  let iconOpen = false;
   let dragId: string | null = null;
   let dragOverIndex: number | null = null;
 
@@ -64,10 +62,6 @@
     el.focus();
     const pos = caret === 'start' ? 0 : el.value.length;
     el.setSelectionRange(pos, pos);
-  }
-
-  function onTitleInput(event: Event): void {
-    updateBoard(id, { title: (event.currentTarget as HTMLTextAreaElement).value });
   }
 
   function onBlockInput(block: Block, event: Event): void {
@@ -169,34 +163,6 @@
     updateBlock(id, newId, { url });
   }
 
-  // ── Cover ────────────────────────────────────────────────────────
-  async function chooseCover(): Promise<void> {
-    const url = await pickImageFile();
-    if (url) updateBoard(id, { cover: url });
-  }
-
-  function setCoverFromUrl(): void {
-    showPrompt({ title: 'Cover image', label: 'Image URL', placeholder: 'https://…' }, (value) =>
-      updateBoard(id, { cover: value }),
-    );
-  }
-
-  function removeCover(): void {
-    if (board) updateBoard(id, { cover: undefined });
-  }
-
-  function setIcon(emoji: string): void {
-    updateBoard(id, { icon: emoji });
-    iconOpen = false;
-  }
-
-  function setIconFromInput(): void {
-    showPrompt({ title: 'Board icon', label: 'Emoji or symbol', value: board?.icon ?? '📓' }, (value) =>
-      updateBoard(id, { icon: [...value][0] ?? '📓' }),
-    );
-    iconOpen = false;
-  }
-
   // ── Drag to reorder ──────────────────────────────────────────────
   function onDragStart(block: Block, event: DragEvent): void {
     dragId = block.id;
@@ -257,90 +223,14 @@
       </div>
     </div>
 
-    <!-- Cover -->
     {#if board.cover}
-      <div class="group relative mb-3 h-44 w-full overflow-hidden rounded-xl">
-        <img src={board.cover} alt="" class="h-full w-full object-cover" />
-        <div class="absolute right-2 top-2 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
-          <button
-            class="rounded-lg bg-black/50 px-2 py-1 text-[11px] text-white backdrop-blur hover:bg-black/70"
-            onclick={chooseCover}
-          >
-            Change
-          </button>
-          <button
-            class="rounded-lg bg-black/50 px-2 py-1 text-[11px] text-white backdrop-blur hover:bg-black/70"
-            onclick={removeCover}
-          >
-            Remove
-          </button>
-        </div>
-      </div>
-    {:else}
-      <div class="mb-3 flex gap-2 opacity-0 transition-opacity hover:opacity-100">
-        <button
-          class="flex items-center gap-1.5 rounded-lg bg-white/[0.05] px-2.5 py-1 text-[11px] text-zinc-400 hover:bg-white/[0.1] hover:text-white"
-          onclick={chooseCover}
-        >
-          <i class="bx bx-image-add"></i> Add cover
-        </button>
-        <button
-          class="flex items-center gap-1.5 rounded-lg bg-white/[0.05] px-2.5 py-1 text-[11px] text-zinc-400 hover:bg-white/[0.1] hover:text-white"
-          onclick={setCoverFromUrl}
-        >
-          <i class="bx bx-link"></i> From URL
-        </button>
-      </div>
+      <button class="mb-3 block h-44 w-full overflow-hidden rounded-xl" aria-label="Edit journal banner" onclick={() => board && editBoardDetails(board)}><img src={board.cover} alt="" class="h-full w-full object-cover" /></button>
     {/if}
-
-    <!-- Icon + title -->
-    <div class="relative mb-4 flex items-start gap-3">
-      <div class="relative">
-        <button
-          class="flex h-14 w-14 items-center justify-center rounded-xl text-4xl transition-colors hover:bg-white/5"
-          title="Change icon"
-          onclick={() => (iconOpen = !iconOpen)}
-        >
-          <span>{board.icon || '📓'}</span>
-        </button>
-        {#if iconOpen}
-          <div class="absolute left-0 top-16 z-40 w-64 rounded-xl border border-white/10 bg-[var(--color-elevated)] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.6)]">
-            <div class="grid grid-cols-6 gap-1">
-              {#each EMOJIS as emoji (emoji)}
-                <button
-                  class="flex h-9 items-center justify-center rounded-lg text-xl hover:bg-white/10"
-                  onclick={() => setIcon(emoji)}
-                >
-                  {emoji}
-                </button>
-              {/each}
-            </div>
-            <button
-              class="mt-1 w-full rounded-lg bg-white/[0.05] py-1.5 text-[11px] text-zinc-300 hover:bg-white/10 hover:text-white"
-              onclick={setIconFromInput}
-            >
-              Custom…
-            </button>
-          </div>
-        {/if}
-      </div>
-      <textarea
-        aria-label="Board title"
-        class="mt-1 w-full resize-none overflow-hidden bg-transparent text-[34px] font-extrabold leading-tight tracking-tight text-white outline-none placeholder:text-zinc-600"
-        rows="1"
-        placeholder="Untitled"
-        value={board.title}
-        use:autosize
-        oninput={onTitleInput}
-        onkeydown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            const first = blocks[0];
-            if (first) void focusBlock(first.id, 'start');
-          }
-        }}
-      ></textarea>
-    </div>
+    <button class="mb-4 flex w-full items-center gap-3 rounded-xl text-left transition-colors hover:bg-white/5" aria-label="Edit journal details" onclick={() => board && editBoardDetails(board)}>
+      <span class="flex h-14 w-14 shrink-0 items-center justify-center text-4xl">{board.icon || '📓'}</span>
+      <span class="flex min-w-0 flex-wrap items-center gap-3"><span class="break-words text-[34px] font-extrabold leading-tight tracking-tight text-white">{board.title || 'Untitled journal'}</span><TagChips tags={board.tags ?? []} /></span>
+      <i class="bx bx-pencil ml-auto shrink-0 text-lg text-zinc-500"></i>
+    </button>
 
     <!-- Blocks -->
     <div class="pb-40" role="list">

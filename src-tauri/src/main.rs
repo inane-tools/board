@@ -6,6 +6,7 @@
 mod assets;
 mod devtools;
 mod link_meta;
+mod media_import;
 mod maintenance;
 mod migrate;
 mod webview_memory;
@@ -40,6 +41,8 @@ fn main() {
         }))
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_drag::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             #[cfg(target_os = "linux")]
@@ -54,9 +57,12 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             assets::save_asset,
+            assets::prepare_export,
+            assets::copy_export_files,
             assets::delete_asset,
             assets::list_assets,
             link_meta::fetch_link_meta,
+            media_import::import_media_url,
             devtools::open_devtools,
             maintenance::cache_size,
             maintenance::clear_local_data,

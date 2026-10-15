@@ -7,13 +7,18 @@ Built with Tauri 2, Rust, Svelte 5, TypeScript and Tailwind 4.
 Board shares its compact sidebar, dialogs, themes and window controls with
 [Cherry](https://github.com/inane-tools/cherry).
 
+![Board screenshot](https://inane.tools/board-screenshot.webp)
+
 ## Features
 
 - Canvas boards with notes, tasks, media, links, colour swatches and child boards.
+- Paste or drag direct image/GIF/video links to download media locally (up to 250 MB); failed imports remain links.
 - Journals with headings, lists, tasks, quotes, callouts, code and images.
-- Search across boards and their contents, tag filters, and favourites.
+- Search across boards and their contents, shared colored tags, tag filters, and favourites.
 - Light, dark and system themes, custom accents, tinted surfaces and app scaling.
 - Local storage without accounts. Files are copied to Board's own assets folder.
+- Copy notes and links as text, files through the Windows clipboard, or images using Copy image.
+- Drag the export handle in an item header to copy it into another app or folder.
 - Windows NSIS installer. Other operating systems are not currently supported.
 
 Libraries are saved locally. Link previews and remote images/media use the network;

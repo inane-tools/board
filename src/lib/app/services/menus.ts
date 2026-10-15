@@ -2,16 +2,16 @@
 // the title bar so the same actions are available everywhere.
 
 import type { Board, BoardKind } from '$lib/core/board';
-import { createBoard, deleteBoard, toggleFavorite, updateBoard } from './library';
+import { deleteBoard, toggleFavorite } from './library';
 import { openBoard } from './navigation';
 import { openContextMenu } from './contextMenu';
-import { showConfirm, showPrompt } from './dialogs';
+import { showConfirm } from './dialogs';
+import { createBoardDetails, editBoardDetails } from './boardEditor';
+import { openTagEditor } from './tagEditor';
 
 /** Create a child board of `parentId` (or the root) and open it. */
-export function newBoard(kind: BoardKind, parentId: string | null): Board {
-  const board = createBoard(kind, parentId);
-  openBoard(board.id);
-  return board;
+export function newBoard(kind: BoardKind, parentId: string | null): void {
+  createBoardDetails(kind, parentId, undefined, board => openBoard(board.id));
 }
 
 export function boardMenu(event: MouseEvent, board: Board, isRoot = false): void {
@@ -33,15 +33,7 @@ export function boardMenu(event: MouseEvent, board: Board, isRoot = false): void
       separatorBefore: true,
       action: () => toggleFavorite(board.id),
     },
-    { label: 'Rename', icon: 'bx bx-pencil', action: () => renameBoard(board) },
-    {
-      label: 'Change icon',
-      icon: 'bx bx-smile',
-      action: () =>
-        showPrompt({ title: 'Board icon', label: 'Emoji or symbol', value: board.icon }, (value) =>
-          updateBoard(board.id, { icon: [...value][0] ?? board.icon }),
-        ),
-    },
+    { label: board.kind === 'document' ? 'Edit journal' : 'Edit board', icon: 'bx bx-pencil', action: () => editBoardDetails(board) },
     { label: 'Add tag…', icon: 'bx bx-purchase-tag', action: () => addTagToBoard(board) },
     ...(isRoot
       ? []
@@ -57,19 +49,8 @@ export function boardMenu(event: MouseEvent, board: Board, isRoot = false): void
   ]);
 }
 
-export function renameBoard(board: Board): void {
-  showPrompt({ title: 'Rename', label: 'Name', value: board.title }, (value) =>
-    updateBoard(board.id, { title: value }),
-  );
-}
-
-export function addTagToBoard(board: Board): void {
-  showPrompt({ title: 'Add tag', label: 'Tag (searched with @tag)', placeholder: 'idea' }, (raw) => {
-    const tag = raw.replace(/^@/, '').trim();
-    if (!tag) return;
-    updateBoard(board.id, { tags: [...new Set([...(board.tags ?? []), tag])] });
-  });
-}
+export function renameBoard(board: Board): void { editBoardDetails(board); }
+export function addTagToBoard(board: Board): void { openTagEditor(board.id); }
 
 export function confirmDeleteBoard(board: Board): void {
   showConfirm(

@@ -12,6 +12,8 @@
   import { startMemoryTrimming } from '$lib/app/services/memory';
   import { openDevTools } from '$lib/app/services/devtools';
   import { overlayScrollbar } from '$lib/ui/actions/overlayScrollbar';
+  import BoardEditor from '$lib/ui/components/BoardEditor.svelte';
+  import TagEditor from '$lib/ui/components/TagEditor.svelte';
   import Titlebar from '$lib/ui/chrome/Titlebar.svelte';
   import Sidebar from '$lib/ui/chrome/Sidebar.svelte';
   import ContextMenu from '$lib/ui/components/ContextMenu.svelte';
@@ -184,6 +186,8 @@
     </div>
   </div>
 
+  <BoardEditor />
+  <TagEditor />
   <ContextMenu />
   <Tooltip />
   <PromptDialog />

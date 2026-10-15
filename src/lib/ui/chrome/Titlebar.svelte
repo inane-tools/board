@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { editBoardDetails } from '$lib/app/services/boardEditor';
+  import { canvasBackground } from '$lib/ui/canvasBackground';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
@@ -11,6 +13,8 @@
   import { resetMoodboardView } from '$lib/app/services/moodboardView';
   import { toggleBoardItems } from '$lib/app/services/boardPanel';
   import { openSettings, settingsOpen } from '$lib/app/services/overlays';
+  import { openTagEditor } from '$lib/app/services/tagEditor';
+  import TagChips from '$lib/ui/components/TagChips.svelte';
   import { showConfirm } from '$lib/app/services/dialogs';
 
   // A board's title + controls live in the bar while a canvas board is open.
@@ -170,23 +174,17 @@
 <!-- svelte-ignore a11y_no_static_element_interactions : header starts a native window drag -->
 <header
   onmousedown={onBarMouseDown}
-  class="absolute inset-x-0 top-0 z-40 flex h-12 items-center gap-2 pl-2"
+  class="board-titlebar absolute inset-x-0 top-0 z-40 flex h-12 items-center gap-2 pl-2"
+  style:--board-titlebar-background={canvasBoard ? canvasBackground(canvasBoard, $settingsStore.tintedBackground) : 'var(--color-surface)'}
   style:padding-left={platform === 'linux' ? `${Math.max(8, linuxInsets.left / $renderedZoom)}px` : undefined}
   style:padding-right={platform === 'linux' ? `${linuxInsets.right / $renderedZoom || 12}px` : undefined}
 >
   {#if canvasBoard}
     <div class="flex min-w-0 items-center gap-1.5 pl-1">
-      <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-base">
-        <span>{canvasBoard.icon || '🗂️'}</span>
-      </span>
-      <input
-        aria-label="Board title"
-        class="min-w-0 rounded-md bg-transparent px-1 py-0.5 text-[13px] font-semibold text-white outline-none transition-colors placeholder:text-zinc-600 hover:bg-white/5 focus:bg-white/5"
-        style="width: {Math.min(30, Math.max(7, (canvasBoard.title || '').length + 1))}ch"
-        value={canvasBoard.title}
-        placeholder="Untitled board"
-        oninput={(e) => canvasBoard && updateBoard(canvasBoard.id, { title: (e.currentTarget as HTMLInputElement).value })}
-      />
+      <button class="flex min-w-0 items-center gap-1.5 rounded-lg px-1 py-0.5 text-[13px] font-semibold text-white transition-colors hover:bg-white/5" aria-label="Edit board details" onclick={() => canvasBoard && editBoardDetails(canvasBoard)}>
+        <span class="flex h-7 w-7 shrink-0 items-center justify-center text-base">{canvasBoard.icon || '🗂️'}</span><span class="max-w-[30ch] truncate">{canvasBoard.title || 'Untitled board'}</span>
+      </button>
+      {#if canvasBoard.tags?.length}<span class="max-w-40 min-w-0 overflow-hidden"><TagChips tags={canvasBoard.tags} /></span>{/if}
       <button
         class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
         title="Reset view"
@@ -217,6 +215,9 @@
   {/if}
 
   <div class="ml-auto flex h-full shrink-0 items-center justify-end gap-2 {isTauri() && platform === 'windows' && $settingsStore.windowControls ? 'pr-[138px]' : $settingsStore.windowControls ? '' : 'pr-3'}">
+    {#if activeBoard}
+      <button class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.06] text-zinc-300 transition-colors hover:bg-white/[0.12] hover:text-white" title="Edit tags" aria-label="Edit tags" onclick={() => activeBoard && openTagEditor(activeBoard.id)}><i class="bx bx-purchase-tag text-base"></i></button>
+    {/if}
     {#if canvasBoard}
       <button
         class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.06] text-zinc-300 transition-colors hover:bg-white/[0.12] hover:text-white"

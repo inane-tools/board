@@ -4,6 +4,8 @@
 // in-memory store immediately and schedules a debounced write. That keeps
 // typing responsive while still persisting continuously.
 
+import { notify } from './contextMenu';
+import { centeredPosition, stackPosition, type Point } from '$lib/core/boardLayout';
 import { get, writable } from 'svelte/store';
 import {
   descendantIds,
@@ -17,12 +19,14 @@ import {
   type BoardKind,
   type Library,
   type MoodItem,
+  type TagDefinition,
 } from '$lib/core/board';
 import { loadLibrary, saveLibrary } from '$lib/infra/storage/journalRepo';
 
 
 export const boardsStore = writable<Board[]>([]);
 export const libraryReady = writable(false);
+export const tagDefinitions = writable<TagDefinition[]>([]);
 
 const SAVE_DEBOUNCE_MS = 400;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -37,7 +41,7 @@ async function persist(): Promise<void> {
 }
 
 function snapshot(): Library {
-  return { boards: get(boardsStore) };
+  return { boards: get(boardsStore), tagDefinitions: get(tagDefinitions) };
 }
 
 function scheduleSave(): void {
@@ -59,12 +63,13 @@ export async function flushLibrary(): Promise<void> {
 
 export async function initLibrary(): Promise<void> {
   const library = await loadLibrary();
+  tagDefinitions.set(library.tagDefinitions ?? []);
   let boards = library.boards;
   if (!rootBoard(boards)) {
     // A library always has a root board.
     boards = [makeBoard('canvas', null, 'Home', '🏠'), ...boards];
     boardsStore.set(boards);
-    await saveLibrary({ boards });
+    await saveLibrary({ boards, tagDefinitions: get(tagDefinitions) });
   } else {
     boardsStore.set(boards);
   }
@@ -95,6 +100,7 @@ export function createBoard(
   parentId: string | null,
   title?: string,
   icon?: string,
+  center?: Point,
 ): Board {
   const board = makeBoard(kind, parentId, title, icon);
   boardsStore.update((list) => {
@@ -108,6 +114,8 @@ export function createBoard(
           x: 60 + (count % 4) * 260,
           y: 60 + Math.floor(count / 4) * 160,
         });
+        if (center) Object.assign(node, centeredPosition(node, center));
+        node.z = parent.items.reduce((max, item) => Math.max(max, item.z), 0) + 1;
         return { ...parent, items: [...parent.items, node], updatedAt: Date.now() };
       });
     }
@@ -267,23 +275,25 @@ export function bringMoodItemsToFront(id: string, itemIds: string[]): void {
 export function moveMoodItems(fromId: string, itemIds: string[], toId: string): void {
   if (fromId === toId) return;
   const wanted = new Set(itemIds);
+  let skipped = 0; let movedCount = 0;
   boardsStore.update((list) => {
     const from = list.find((board) => board.id === fromId);
     const to = list.find((board) => board.id === toId);
     if (!from || !to || to.kind !== 'canvas') return list;
-    const moving = from.items.filter((item) => wanted.has(item.id));
-    if (moving.length === 0) return list;
-    for (const item of moving) {
-      if (item.type !== 'board' || !item.boardId) continue;
-      const child = list.find((board) => board.id === item.boardId);
-      if (!child || child.parentId === null || child.id === toId || descendantIds(list, child.id).includes(toId)) return list;
-    }
+    const moving = from.items.filter((item) => wanted.has(item.id)).filter(item => {
+      if (item.type !== 'board' || !item.boardId) return true;
+      const child = list.find(board => board.id === item.boardId);
+      if (!child || child.parentId === null || child.id === toId || descendantIds(list, child.id).includes(toId)) { skipped++; return false; }
+      return true;
+    });
+    if (!moving.length) return list;
+    movedCount = moving.length;
+    const movedIds = new Set(moving.map(item => item.id));
 
     let z = to.items.reduce((max, it) => Math.max(max, it.z), 0);
     const placed = moving.map((item, i) => ({
       ...item,
-      x: 60 + (i % 4) * 240,
-      y: 60 + Math.floor(i / 4) * 170,
+      ...stackPosition(i),
       z: ++z,
     }));
     // A moved board node re-parents its child board to the destination.
@@ -293,7 +303,7 @@ export function moveMoodItems(fromId: string, itemIds: string[], toId: string): 
 
     return list.map((board) => {
       if (board.id === fromId) {
-        return { ...board, updatedAt: Date.now(), items: board.items.filter((item) => !wanted.has(item.id)) };
+        return { ...board, updatedAt: Date.now(), items: board.items.filter((item) => !movedIds.has(item.id)) };
       }
       if (board.id === toId) {
         return { ...board, updatedAt: Date.now(), items: [...board.items, ...placed] };
@@ -302,7 +312,21 @@ export function moveMoodItems(fromId: string, itemIds: string[], toId: string): 
       return board;
     });
   });
+  if (skipped) notify(movedCount ? 'A board cannot be moved inside itself or its children. The other selected items were moved.' : 'A board cannot be moved inside itself or its children.');
   scheduleSave();
 }
 
 export { makeMoodItem };
+
+/** Rename and delete affect all assignments, preserving a single shared tag identity. */
+export function editTag(name: string, nextName: string, color: string): void {
+  tagDefinitions.update(tags => [...tags.filter(tag => tag.name !== name && tag.name !== nextName), { name: nextName, color }]);
+  const rename = (tags?: string[]) => tags ? [...new Set(tags.map(tag => tag === name ? nextName : tag))] : tags;
+  boardsStore.update(boards => boards.map(board => ({ ...board, tags: rename(board.tags), items: board.items.map(item => ({ ...item, tags: rename(item.tags) })) })));
+  scheduleSave();
+}
+export function deleteTag(name: string): void {
+  tagDefinitions.update(tags => tags.filter(tag => tag.name !== name));
+  boardsStore.update(boards => boards.map(board => ({ ...board, tags: board.tags?.filter(tag => tag !== name), items: board.items.map(item => ({ ...item, tags: item.tags?.filter(tag => tag !== name) })) })));
+  scheduleSave();
+}

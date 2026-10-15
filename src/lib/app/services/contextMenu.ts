@@ -10,6 +10,7 @@ export interface ContextMenuItem {
   label: string;
   /** Boxicons class, e.g. `bx bx-play`. */
   icon?: string;
+  emoji?: string;
   disabled?: boolean;
   /** Clearly mark actions that permanently delete something. */
   destructive?: boolean;

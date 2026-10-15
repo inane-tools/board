@@ -11,7 +11,7 @@
       <p class="mt-1 text-[12px] leading-relaxed text-zinc-500">{description}</p>
     {/if}
   </div>
-  <button
+  <button type="button"
     class="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.06] text-zinc-300 transition-colors hover:bg-white/[0.12] hover:text-white"
     aria-label={`Close ${title.toLowerCase()}`}
     onclick={onClose}

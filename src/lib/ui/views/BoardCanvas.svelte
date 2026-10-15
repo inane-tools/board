@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { centeredPosition, stackPosition } from '$lib/core/boardLayout';
+  import { createBoardDetails } from '$lib/app/services/boardEditor';
+  import { stepCanvasZoom } from '$lib/core/canvasZoom';
+  import { canvasBackground } from '$lib/ui/canvasBackground';
   import { onDestroy } from 'svelte';
   import type { Board, MoodItem, MoodItemType } from '$lib/core/board';
   import { boardPreview, domainOf, embedUrl, ITEM_TYPE_LABEL, itemLabel, itemSnippet, makeMoodItem, normalizeUrl } from '$lib/core/board';
@@ -7,7 +11,6 @@
     boardsStore,
     bringMoodItemToFront,
     bringMoodItemsToFront,
-    createBoard,
     deleteBoard,
     moveMoodItems,
     removeMoodItem,
@@ -18,6 +21,13 @@
   import { goHome, openBoard } from '$lib/app/services/navigation';
   import { boardMenu } from '$lib/app/services/menus';
   import { notify, openContextMenu, openContextMenuAt } from '$lib/app/services/contextMenu';
+  import { readDroppedFiles } from '$lib/app/services/droppedFiles';
+  import { mediaUrl, droppedLink } from '$lib/core/mediaUrl';
+  import { importMediaUrl } from '$lib/app/services/mediaImport';
+  import { copyItems, copyImage, dragItems } from '$lib/app/services/itemTransfer';
+  import { itemText } from '$lib/core/itemTransfer';
+  import { openTagEditor } from '$lib/app/services/tagEditor';
+  import TagChips from '$lib/ui/components/TagChips.svelte';
   import { showPrompt } from '$lib/app/services/dialogs';
   import { pickFiles, formatSize, openStoredFile, storeFile } from '$lib/app/services/assets';
   import { pickImageFile } from '$lib/app/services/images';
@@ -69,7 +79,7 @@
         : toolbarPos === 'right'
           ? 'absolute right-4 top-1/2 z-40 -translate-y-1/2'
           : 'absolute inset-x-0 bottom-4 z-40 flex justify-center px-4';
-  $: toolbarPill = `flex items-center justify-center gap-1 rounded-full bg-[var(--color-elevated)] shadow-[0_12px_34px_rgba(0,0,0,0.5)] ${
+  $: toolbarPill = `flex items-center justify-center gap-1 rounded-full journal-sidebar shadow-[0_12px_34px_rgba(0,0,0,0.5)] ${
     toolbarVertical ? 'flex-col px-1 py-1.5' : 'max-w-full flex-wrap p-1.5'
   }`;
   $: toolbarSep = toolbarVertical ? 'my-0.5 h-px w-6 bg-white/10' : 'h-6 w-px bg-white/10';
@@ -193,9 +203,9 @@
     zoom = next;
     pan = { x: cx - world.x * next, y: cy - world.y * next };
   }
-  function zoomBy(factor: number): void {
+  function zoomBy(direction: -1 | 1): void {
     const rect = viewportEl?.getBoundingClientRect();
-    setZoom(zoom * factor, rect ? rect.width / 2 : 0, rect ? rect.height / 2 : 0);
+    setZoom(stepCanvasZoom(zoom, direction), rect ? rect.width / 2 : 0, rect ? rect.height / 2 : 0);
   }
   function zoomReset(): void {
     zoom = 1;
@@ -250,12 +260,27 @@
     selected = new Set(hits.map((item) => item.id));
   }
 
+  let wheelZoomDelta = 0;
+  let lastWheelZoom = 0;
+  function canvasWheel(node: HTMLElement) {
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return { destroy() { node.removeEventListener('wheel', onWheel); } };
+  }
   function onWheel(event: WheelEvent): void {
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
       if (!viewportEl) return;
       const rect = viewportEl.getBoundingClientRect();
-      setZoom(zoom * Math.exp(-event.deltaY * 0.0015), event.clientX - rect.left, event.clientY - rect.top);
+      event.stopPropagation();
+      const now = performance.now();
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1);
+      if (now - lastWheelZoom > 180 || Math.sign(delta) !== Math.sign(wheelZoomDelta)) wheelZoomDelta = 0;
+      lastWheelZoom = now;
+      wheelZoomDelta += delta;
+      if (Math.abs(wheelZoomDelta) >= 40) {
+        setZoom(stepCanvasZoom(zoom, wheelZoomDelta < 0 ? 1 : -1), event.clientX - rect.left, event.clientY - rect.top);
+        wheelZoomDelta = 0;
+      }
       return;
     }
     const target = event.target as HTMLElement | null;
@@ -282,10 +307,17 @@
     selected = new Set();
   }
 
-  function copySelection(): void {
-    if (selected.size === 0) return;
-    clipboard = items.filter((it) => selected.has(it.id)).map((it) => ({ ...it }));
-    void navigator.clipboard.writeText('board-items:' + JSON.stringify(clipboard)).catch(() => notify('Clipboard access was denied. Use Paste from the board menu.'));
+  async function copySelection(): Promise<boolean> {
+    if (!selected.size) return false;
+    const copying = items.filter(item => selected.has(item.id)).map(item => ({ ...item }));
+    try { await copyItems(copying, $boardsStore); clipboard = copying; return true; }
+    catch { notify('Could not copy these items. Check the original files and try again.'); return false; }
+  }
+  async function dragOut(item: MoodItem): Promise<void> {
+    endDrag();
+    const exporting = selected.has(item.id) ? items.filter(value => selected.has(value.id)) : [item];
+    try { await dragItems(exporting, $boardsStore); }
+    catch { notify('Could not drag these items out. Check the original files and try again.'); }
   }
 
   function pasteItems(source: MoodItem[], at?: { x: number; y: number }): void {
@@ -322,8 +354,8 @@
       }
       if (key === 'x' && selected.size) {
         event.preventDefault();
-        copySelection();
-        deleteSelected();
+        const source = board?.id; const ids = [...selected];
+        void copySelection().then(copied => { if (copied && source) removeMoodItems(source, ids); });
         return;
       }
       if (key === 'd' && selected.size) {
@@ -408,7 +440,9 @@
   function spawn(type: MoodItemType, patch: Partial<MoodItem> = {}, at?: { x: number; y: number }): void {
     if (!board) return;
     const world = at ?? centerWorld();
-    addMoodItem(board.id, makeMoodItem(type, { x: Math.round(world.x), y: Math.round(world.y), ...patch }));
+    const item = makeMoodItem(type, { x: Math.round(world.x), y: Math.round(world.y), ...patch });
+    if (!at && patch.x === undefined && patch.y === undefined) Object.assign(item, centeredPosition(item, world));
+    addMoodItem(board.id, item);
   }
 
   function addNote(at?: { x: number; y: number }): void {
@@ -420,7 +454,9 @@
   function addLink(at?: { x: number; y: number }): void {
     showPrompt({ title: 'Add link', label: 'URL', placeholder: 'https://…' }, (raw) => {
       const world = at ?? centerWorld();
-      addLinkItem(raw, world.x, world.y);
+      const size = makeMoodItem('link');
+      const point = at ?? centeredPosition(size, world);
+      addLinkItem(raw, point.x, point.y);
     });
   }
   function addColor(at?: { x: number; y: number }): void {
@@ -449,11 +485,12 @@
     spawn('image', { url, ...size }, at);
   }
   async function addFiles(at?: { x: number; y: number }): Promise<void> {
+    const boardId = board?.id; const position = at ?? centerWorld();
     const files = await pickFiles();
-    if (files.length) await handleFiles(files, at ?? centerWorld());
+    if (files.length) await handleFiles(files, position, boardId, !at);
   }
   function addChild(kind: 'canvas' | 'document'): void {
-    if (board) createBoard(kind, board.id);
+    if (board) createBoardDetails(kind, board.id, centerWorld());
   }
 
   function addLinkItem(rawUrl: string, x: number, y: number): void {
@@ -463,6 +500,7 @@
       notify('That does not look like a valid link.');
       return;
     }
+    if (mediaUrl(url)) { void addRemoteMedia(url, x, y); return; }
     const boardId = board.id;
     const item = makeMoodItem('link', { url, text: url, x: Math.round(x), y: Math.round(y) });
     addMoodItem(boardId, item);
@@ -488,19 +526,24 @@
     return /\.(txt|md|markdown|json|csv|tsv|log|ya?ml|toml|ini|cfg|conf|xml|html?|css|js|mjs|ts|jsx|tsx|rs|py|go|java|c|cpp|h|hpp|sh|ps1|rb|php|swift|kt)$/i.test(file.name);
   }
 
-  async function addFileItem(file: File, x: number, y: number, boardId: string): Promise<void> {
+  async function addFileItem(file: File, x: number, y: number, boardId: string, centered = false): Promise<void> {
+    const place = (kind: MoodItemType, patch: Partial<MoodItem>) => {
+      const item = makeMoodItem(kind, patch);
+      if (centered) Object.assign(item, centeredPosition(item, { x, y }));
+      addMoodItem(boardId, item);
+    };
     const type = file.type || '';
     const name = file.name || 'file';
     if (type.startsWith('image/')) {
       const stored = await storeFile(file);
       const size = await fitImage(stored.url);
-      addMoodItem(boardId, makeMoodItem('image', { url: stored.url, path: stored.path, name, x, y, ...size }));
+      place('image', { url: stored.url, path: stored.path, name, x, y, ...size });
     } else if (type.startsWith('video/')) {
       const stored = await storeFile(file);
-      addMoodItem(boardId, makeMoodItem('video', { url: stored.url, path: stored.path, name, mime: type, size: file.size, x, y }));
+      place('video', { url: stored.url, path: stored.path, name, mime: type, size: file.size, x, y });
     } else if (type.startsWith('audio/')) {
       const stored = await storeFile(file);
-      addMoodItem(boardId, makeMoodItem('audio', { url: stored.url, path: stored.path, name, mime: type, size: file.size, x, y }));
+      place('audio', { url: stored.url, path: stored.path, name, mime: type, size: file.size, x, y });
     } else if (isTextFile(file)) {
       const stored = await storeFile(file);
       let text = '';
@@ -509,22 +552,38 @@
       } catch {
         /* ignore */
       }
-      addMoodItem(boardId, makeMoodItem('text', { text, name, url: stored.url, path: stored.path, mime: type, size: file.size, x, y }));
+      place('text', { text, name, url: stored.url, path: stored.path, mime: type, size: file.size, x, y });
     } else {
       const stored = await storeFile(file);
-      addMoodItem(boardId, makeMoodItem('file', { url: stored.url, path: stored.path, name, mime: type, size: file.size, x, y }));
+      place('file', { url: stored.url, path: stored.path, name, mime: type, size: file.size, x, y });
     }
   }
 
-  async function handleFiles(files: File[], at: { x: number; y: number } | null): Promise<void> {
-    if (!board) return;
-    const boardId = board.id;
+  async function handleFiles(files: File[], at: { x: number; y: number } | null, boardId = board?.id, centered = false): Promise<void> {
+    if (!boardId) return;
     const base = at ?? centerWorld();
     let i = 0;
     for (const file of files) {
-      try { await addFileItem(file, Math.round(base.x + i * 26), Math.round(base.y + i * 26), boardId); }
+      try { const position = stackPosition(i, base); await addFileItem(file, position.x, position.y, boardId, centered); }
       catch { notify(`Could not import ${file.name}. Check available disk space and file permissions.`); }
       i += 1;
+    }
+  }
+
+  async function addRemoteMedia(url: string, x: number, y: number): Promise<void> {
+    if (!board) return;
+    const media = mediaUrl(url); if (!media) return;
+    const boardId = board.id;
+    const placeholder = makeMoodItem('link', { url, text: media.name, x: Math.round(x), y: Math.round(y) });
+    addMoodItem(boardId, placeholder);
+    try {
+      const stored = await importMediaUrl(url);
+      const type = stored.mime.startsWith('image/') ? 'image' : 'video';
+      const size = type === 'image' ? await fitImage(stored.url) : { width: 320, height: 180 };
+      updateMoodItem(boardId, placeholder.id, { ...stored, ...size, type, name: media.name, text: undefined });
+    } catch {
+      notify('Could not download that media. Kept the original link instead.');
+      void enrichLink(boardId, placeholder.id, url);
     }
   }
 
@@ -540,12 +599,19 @@
     event.preventDefault();
     if (!board) return;
     const world = toWorld(event.clientX, event.clientY);
-    const files = Array.from(event.dataTransfer?.files ?? []);
-    if (files.length) {
-      await handleFiles(files, world);
+    const transfer = event.dataTransfer;
+    if (!transfer) return;
+    const boardId = board.id;
+    const text = droppedLink(transfer.getData('text/uri-list'), transfer.getData('text/plain'));
+    const hasFiles = Array.from(transfer.items).some(item => item.kind === 'file') || transfer.files.length > 0;
+    if (hasFiles) {
+      notify('Reading dropped files and folders…');
+      const { files, errors } = await readDroppedFiles(transfer);
+      await handleFiles(files, world, boardId);
+      if (errors.length) notify(`Could not read ${errors.length} file or folder${errors.length === 1 ? '' : 's'}. The readable files were imported.`);
+      else if (!files.length) notify('That folder contains no files to import.');
       return;
     }
-    const text = event.dataTransfer?.getData('text/plain')?.trim();
     if (text) addTextAt(text, world);
   }
 
@@ -563,6 +629,7 @@
     const text = event.clipboardData?.getData('text/plain')?.trim();
     if (text) {
       event.preventDefault();
+      if (clipboard.length && text === clipboard.map(item => itemText(item, $boardsStore)).join('\n\n')) { pasteItems(clipboard, anchor ?? undefined); return; }
       if (text.startsWith('board-items:')) {
         try {
           const copied: unknown = JSON.parse(text.slice('board-items:'.length));
@@ -609,23 +676,21 @@
     closeBoardItems();
   }
 
-  function addTagToItem(item: MoodItem): void {
-    if (!board) return;
-    showPrompt({ title: 'Add tag', label: 'Tag (searched with @tag)', placeholder: 'idea' }, (raw) => {
-      const tag = raw.replace(/^@/, '').trim();
-      if (!tag || !board) return;
-      updateMoodItem(board.id, item.id, { tags: [...new Set([...(item.tags ?? []), tag])] });
-    });
-  }
+  function addTagToItem(item: MoodItem): void { if (board) openTagEditor(board.id, item.id); }
 
   function moveSelectionToBoard(itemIds: string[], targetId: string | null): void {
     if (!board || itemIds.length === 0) return;
     const fromId = board.id;
-    let target = targetId;
-    if (!target) target = createBoard('canvas', fromId, 'New board').id;
-    moveMoodItems(fromId, itemIds, target);
+    if (!targetId) {
+      createBoardDetails('canvas', fromId, centerWorld(), created => {
+        moveMoodItems(fromId, itemIds, created.id);
+        selected = new Set();
+        openBoard(created.id);
+      });
+      return;
+    }
+    moveMoodItems(fromId, itemIds, targetId);
     selected = new Set();
-    if (!targetId) openBoard(target);
   }
 
   function openMoveMenu(x: number, y: number, itemIds: string[]): void {
@@ -633,15 +698,31 @@
     const targets = $boardsStore.filter((b) => b.kind === 'canvas' && b.id !== currentId);
     openContextMenuAt(x, y, [
       { label: 'New board', icon: 'bx bx-plus', action: () => moveSelectionToBoard(itemIds, null) },
-      ...targets.map((b) => ({
+      ...targets.map((b, index) => ({
         label: b.title || 'Untitled board',
-        icon: 'bx bx-layout',
+        emoji: b.icon || '🗂️',
+        separatorBefore: index === 0,
         action: () => moveSelectionToBoard(itemIds, b.id),
       })),
     ]);
   }
 
   function itemMenu(event: MouseEvent, item: MoodItem): void {
+    if (!selected.has(item.id)) selectOnly(item.id);
+    if (selected.size > 1 && board) {
+      const boardId = board.id;
+      const chosen = items.filter(value => selected.has(value.id));
+      const ids = chosen.map(value => value.id);
+      openContextMenu(event, [
+        { label: 'Copy ' + ids.length + ' items', icon: 'bx bx-copy', action: () => { void copySelection(); } },
+        ...(chosen.every(value => value.type !== 'board') ? [{ label: 'Duplicate', icon: 'bx bx-duplicate', action: () => pasteItems(chosen.map(value => ({ ...value }))) }] : []),
+        { label: 'Bring to front', icon: 'bx bx-layer', action: () => bringMoodItemsToFront(boardId, ids) },
+        { label: 'Edit tags…', icon: 'bx bx-purchase-tag', separatorBefore: true, action: () => openTagEditor(boardId, ids) },
+        { label: 'Move to board…', icon: 'bx bx-move', action: () => openMoveMenu(event.clientX, event.clientY, ids) },
+        { label: 'Delete ' + ids.length + ' items', icon: 'bx bx-trash', destructive: true, separatorBefore: true, action: deleteSelected },
+      ]);
+      return;
+    }
     if (item.type === 'board') {
       const child = item.boardId ? $boardsStore.find((b) => b.id === item.boardId) : undefined;
       if (child) {
@@ -668,7 +749,9 @@
       ...(item.type === 'file' || item.type === 'video' || item.type === 'audio'
         ? [{ label: 'Open file', icon: 'bx bx-export', action: () => openStoredFile(item) }]
         : []),
-      { label: 'Add tag…', icon: 'bx bx-purchase-tag', separatorBefore: true, action: () => addTagToItem(item) },
+      { label: 'Copy', icon: 'bx bx-copy', action: () => { selectOnly(item.id); void copySelection(); } },
+      ...(item.type === 'image' ? [{ label: 'Copy image', icon: 'bx bx-image', action: () => { void copyImage(item).catch(() => notify('Could not copy this image.')); } }] : []),
+      { label: 'Edit tags…', icon: 'bx bx-purchase-tag', separatorBefore: true, action: () => addTagToItem(item) },
       { label: 'Move to board…', icon: 'bx bx-move', action: () => openMoveMenu(event.clientX, event.clientY, [item.id]) },
       {
         label: 'Delete',
@@ -685,7 +768,8 @@
     if (item.type === 'color') return item.color ?? '#ff4d5e';
     if (item.type === 'video') return '#000';
     if (item.type === 'link' && (embedUrl(item.url ?? '') || item.ogImage)) return '#000';
-    return item.color ?? '#26262b';
+    if (!item.color || item.color === '#26262b') return 'var(--color-card)';
+    return `color-mix(in srgb, ${item.color} var(--board-note-color-strength), var(--color-card))`;
   }
 </script>
 
@@ -702,20 +786,20 @@
   <div
     bind:this={viewportEl}
     class="relative min-h-0 flex-1 select-none overflow-hidden"
-    style="background-color: color-mix(in srgb, var(--color-accent) 14%, {board.color}); background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px); background-size: {22 * zoom}px {22 * zoom}px; background-position: {pan.x}px {pan.y}px;"
+    style="background-color: {canvasBackground(board, $settingsStore.tintedBackground)}; background-image: radial-gradient(var(--board-grid) 1px, transparent 1px); background-size: {22 * zoom}px {22 * zoom}px; background-position: {pan.x}px {pan.y}px;"
     onpointerdown={onViewportPointerDown}
-    onwheel={onWheel}
+    use:canvasWheel
     ondrop={onCanvasDrop}
     ondragover={(e) => e.preventDefault()}
     oncontextmenu={boardContextMenu}
     ondblclick={(e) => {
-      if (e.target === viewportEl) {
+      if (e.target === viewportEl || (e.target instanceof HTMLElement && e.target.hasAttribute('data-canvas-layer'))) {
         const world = toWorld(e.clientX, e.clientY);
         spawn('note', { x: Math.round(world.x), y: Math.round(world.y), text: '' });
       }
     }}
   >
-    <div class="absolute inset-0" style="transform: translate({pan.x}px, {pan.y}px) scale({zoom}); transform-origin: 0 0;">
+    <div data-canvas-layer class="absolute inset-0" style="transform: translate({pan.x}px, {pan.y}px) scale({zoom}); transform-origin: 0 0;">
       {#each items as item (item.id)}
         {@const isSel = selected.has(item.id)}
         {@const embed = item.type === 'link' ? embedUrl(item.url ?? '') : null}
@@ -730,16 +814,18 @@
             onpointerdown={(e) => onItemPointerDown(e, item)}
             oncontextmenu={(e) => itemMenu(e, item)}
           >
-            <div class="flex h-7 shrink-0 cursor-move items-center gap-1 bg-black/15 px-2" onpointerdown={(e) => beginDrag(e, item, 'move')}>
+            <div class="flex h-7 shrink-0 cursor-move items-center gap-1 bg-black/15 px-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100" onpointerdown={(e) => beginDrag(e, item, 'move')}>
               <i class="bx {child?.kind === 'document' ? 'bx-note' : 'bx-layout'} text-[13px] text-white/70"></i>
               <span class="h-3 flex-1"></span>
+              <button class="flex h-5 w-5 shrink-0 cursor-grab items-center justify-center rounded-full text-white/60 hover:bg-white/10 hover:text-white" aria-label="Drag item out" title="Drag out to another app or folder" onpointerdown={(event) => { if (event.button !== 0) return; event.preventDefault(); event.stopPropagation(); void dragOut(item); }}><i class="bx bx-export text-[12px]"></i></button>
+              <button class="min-w-0 max-w-[55%] overflow-hidden" aria-label="Edit item tags" onpointerdown={(event) => event.stopPropagation()} onclick={() => addTagToItem(item)}><TagChips tags={item.tags ?? []} />{#if !item.tags?.length}<i class="bx bx-purchase-tag text-[12px] text-white/50"></i>{/if}</button>
             </div>
             {#if child}
               <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
               <div class="flex min-h-0 flex-1 cursor-pointer flex-col px-2.5 pb-2 pt-1.5" onclick={() => openBoard(child.id)} role="link" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') openBoard(child.id); }}>
                 <div class="flex items-center gap-1.5">
                   <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/5 text-sm"><span>{child.icon || (child.kind === 'document' ? '📓' : '🗂️')}</span></span>
-                  <span class="min-w-0 flex-1 truncate text-[12px] font-semibold text-white">{child.title || 'Untitled'}</span>
+                  <span class="flex min-w-0 flex-1 items-center gap-1.5"><span class="truncate text-[12px] font-semibold text-white">{child.title || 'Untitled'}</span><span class="min-w-0 max-w-[55%] overflow-hidden"><TagChips tags={child.tags ?? []} /></span></span>
                   <i class="bx bx-chevron-right text-base text-zinc-500"></i>
                 </div>
                 <div class="mt-1.5 min-h-0 flex-1 overflow-hidden">
@@ -782,13 +868,15 @@
             oncontextmenu={(e) => itemMenu(e, item)}
           >
             <div
-              class="flex h-7 shrink-0 cursor-move items-center gap-1 px-2 {item.type === 'image' || embed || item.ogImage
-                ? 'absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-black/60 to-transparent opacity-0 transition-opacity group-hover:opacity-100'
+              class="flex h-7 shrink-0 cursor-move items-center gap-1 px-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 {item.type === 'image' || embed || item.ogImage
+                ? 'absolute inset-x-0 top-0 z-10 bg-black/60'
                 : 'bg-black/15'}"
               onpointerdown={(e) => beginDrag(e, item, 'move')}
             >
               <i class="bx {TYPE_ICON[item.type]} text-[13px] text-white/70"></i>
               {#if item.name}<span class="min-w-0 flex-1 truncate text-[10px] text-white/50">{item.name}</span>{:else}<span class="h-3 flex-1"></span>{/if}
+              <button class="min-w-0 max-w-[55%] overflow-hidden" aria-label="Edit item tags" onpointerdown={(event) => event.stopPropagation()} onclick={() => addTagToItem(item)}><TagChips tags={item.tags ?? []} /></button>
+              <button class="flex h-5 w-5 shrink-0 cursor-grab items-center justify-center rounded-full text-white/60 hover:bg-white/10 hover:text-white" aria-label="Drag item out" title="Drag out to another app or folder" onpointerdown={(event) => { if (event.button !== 0) return; event.preventDefault(); event.stopPropagation(); void dragOut(item); }}><i class="bx bx-export text-[12px]"></i></button>
               {#if item.type === 'note' || item.type === 'todo' || item.type === 'color'}
                 <input
                   type="color"
@@ -800,7 +888,7 @@
                   oninput={(e) => board && updateMoodItem(board.id, item.id, { color: (e.currentTarget as HTMLInputElement).value })}
                 />
               {/if}
-              <button class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-black/40 text-white/80 opacity-0 transition group-hover:opacity-100 hover:bg-black/70 hover:text-white" aria-label="Delete item" onpointerdown={(e) => e.stopPropagation()} onclick={() => board && removeMoodItem(board.id, item.id)}>
+              <button class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-black/40 text-white/80 transition hover:bg-black/70 hover:text-white" aria-label="Delete item" onpointerdown={(e) => e.stopPropagation()} onclick={() => board && removeMoodItem(board.id, item.id)}>
                 <i class="bx bx-x text-[14px]"></i>
               </button>
             </div>
@@ -883,15 +971,15 @@
     </div>
 
     {#if selected.size >= 2}
-      <div class="absolute left-1/2 top-16 z-40 flex -translate-x-1/2 items-center gap-1 rounded-2xl bg-[var(--color-elevated)] p-1.5 pl-3 shadow-[0_12px_34px_rgba(0,0,0,0.5)]" onpointerdown={(e) => e.stopPropagation()}>
-        <span class="text-[12px] text-zinc-300">{selected.size} selected</span>
-        <button class="flex h-8 items-center gap-1.5 rounded-xl px-2.5 text-[11px] text-red-300 transition-colors hover:bg-red-500/15 hover:text-red-200" onclick={deleteSelected}>
-          <i class="bx bx-trash text-base"></i> Delete
+      <div class="absolute left-1/2 top-16 z-40 flex max-w-[calc(100%-2rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-full journal-sidebar p-2 shadow-[0_12px_34px_rgba(0,0,0,0.5)]" onpointerdown={(e) => e.stopPropagation()}>
+        <span class="whitespace-nowrap px-2 text-[12px] font-medium text-zinc-300">{selected.size} selected</span>
+        <button class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-500/10 text-red-300 transition-colors hover:bg-red-500/20 hover:text-red-200" aria-label="Delete selected items" title="Delete selected items" onclick={deleteSelected}>
+          <i class="bx bx-trash text-base"></i>
         </button>
-        <button class="flex h-8 items-center gap-1.5 rounded-xl px-2.5 text-[11px] text-zinc-300 transition-colors hover:bg-white/10 hover:text-white" onclick={(e) => openMoveMenu(e.clientX, e.clientY, [...selected])}>
-          <i class="bx bx-move text-base"></i> Move
+        <button class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-zinc-300 transition-colors hover:bg-white/[0.12] hover:text-white" aria-label="Move selected items" title="Move selected items" onclick={(e) => openMoveMenu(e.clientX, e.clientY, [...selected])}>
+          <i class="bx bx-move text-base"></i>
         </button>
-        <button class="flex h-8 items-center rounded-xl px-2.5 text-[11px] text-zinc-300 transition-colors hover:bg-white/10 hover:text-white" onclick={clearSelection}>Clear</button>
+        <button class="flex h-8 items-center rounded-full bg-white/[0.06] px-3 text-[11px] text-zinc-300 transition-colors hover:bg-white/[0.12] hover:text-white" onclick={clearSelection}>Deselect</button>
       </div>
     {/if}
 
@@ -924,7 +1012,7 @@
                     {#if itemSnippet(item, $boardsStore)}<span class="block truncate text-[11px] text-zinc-500">{itemSnippet(item, $boardsStore)}</span>{/if}
                     {#if item.tags?.length}
                       <span class="mt-0.5 flex flex-wrap gap-1">
-                        {#each item.tags as tag (tag)}<span class="rounded bg-white/[0.06] px-1.5 text-[9px] text-[var(--color-accent2)]">@{tag}</span>{/each}
+                        <TagChips tags={item.tags} />
                       </span>
                     {/if}
                   </span>
@@ -943,16 +1031,16 @@
           <button class="toolbar-icon" aria-label="New board" onclick={() => addChild('canvas')} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'New board', '', 'top')} onmouseleave={hideTip}><i class="bx bx-layout text-lg"></i></button>
           <button class="toolbar-icon" aria-label="New journal" onclick={() => addChild('document')} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'New journal', '', 'top')} onmouseleave={hideTip}><i class="bx bx-note text-lg"></i></button>
           <span class={toolbarSep}></span>
-          <button class="toolbar-icon" aria-label="New note" onclick={addNote} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Note', '', 'top')} onmouseleave={hideTip}><i class="bx bx-note text-lg"></i></button>
-          <button class="toolbar-icon" aria-label="New to-do" onclick={addTodo} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'To-do', '', 'top')} onmouseleave={hideTip}><i class="bx bx-check-square text-lg"></i></button>
-          <button class="toolbar-icon" aria-label="New image" onclick={addImage} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Image', '', 'top')} onmouseleave={hideTip}><i class="bx bx-image-add text-lg"></i></button>
-          <button class="toolbar-icon" aria-label="New file" onclick={addFiles} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'File', '', 'top')} onmouseleave={hideTip}><i class="bx bx-file text-lg"></i></button>
-          <button class="toolbar-icon" aria-label="New link" onclick={addLink} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Link', '', 'top')} onmouseleave={hideTip}><i class="bx bx-link text-lg"></i></button>
-          <button class="toolbar-icon" aria-label="New colour" onclick={addColor} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Colour', '', 'top')} onmouseleave={hideTip}><i class="bx bx-palette text-lg"></i></button>
+          <button class="toolbar-icon" aria-label="New note" onclick={() => addNote()} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Note', '', 'top')} onmouseleave={hideTip}><i class="bx bx-note text-lg"></i></button>
+          <button class="toolbar-icon" aria-label="New to-do" onclick={() => addTodo()} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'To-do', '', 'top')} onmouseleave={hideTip}><i class="bx bx-check-square text-lg"></i></button>
+          <button class="toolbar-icon" aria-label="New image" onclick={() => addImage()} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Image', '', 'top')} onmouseleave={hideTip}><i class="bx bx-image-add text-lg"></i></button>
+          <button class="toolbar-icon" aria-label="New file" onclick={() => addFiles()} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'File', '', 'top')} onmouseleave={hideTip}><i class="bx bx-file text-lg"></i></button>
+          <button class="toolbar-icon" aria-label="New link" onclick={() => addLink()} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Link', '', 'top')} onmouseleave={hideTip}><i class="bx bx-link text-lg"></i></button>
+          <button class="toolbar-icon" aria-label="New colour" onclick={() => addColor()} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Colour', '', 'top')} onmouseleave={hideTip}><i class="bx bx-palette text-lg"></i></button>
           <span class={toolbarSep}></span>
-          <button class="toolbar-icon" aria-label="Zoom out" onclick={() => zoomBy(1 / 1.25)} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Zoom out', '', 'top')} onmouseleave={hideTip}><i class="bx bx-minus text-lg"></i></button>
-          <button class="flex h-8 items-center rounded-full px-2 text-[11px] tabular-nums text-zinc-300 transition-colors hover:bg-white/10 hover:text-white" aria-label="Reset zoom" onclick={zoomReset} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Reset zoom', '', 'top')} onmouseleave={hideTip}>{Math.round(zoom * 100)}%</button>
-          <button class="toolbar-icon" aria-label="Zoom in" onclick={() => zoomBy(1.25)} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Zoom in', '', 'top')} onmouseleave={hideTip}><i class="bx bx-plus text-lg"></i></button>
+          <button class="toolbar-icon" aria-label="Zoom out" onclick={() => zoomBy(-1)} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Zoom out', '', 'top')} onmouseleave={hideTip}><i class="bx bx-minus text-lg"></i></button>
+          <button class="flex h-8 w-12 shrink-0 items-center justify-center rounded-full text-[11px] tabular-nums text-zinc-300 transition-colors hover:bg-white/10 hover:text-white" aria-label="Reset zoom" onclick={zoomReset} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Reset zoom', '', 'top')} onmouseleave={hideTip}>{Math.round(zoom * 100)}%</button>
+          <button class="toolbar-icon" aria-label="Zoom in" onclick={() => zoomBy(1)} onmouseenter={(e) => showTip(e.currentTarget as HTMLElement, 'Zoom in', '', 'top')} onmouseleave={hideTip}><i class="bx bx-plus text-lg"></i></button>
         </div>
       </div>
     {/if}
@@ -960,8 +1048,8 @@
     {#if items.length === 0}
       <div class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center text-zinc-300">
         <i class="bx bx-paste text-3xl"></i>
-        <p class="text-[13px]">Drag any files here, or paste images, text or links</p>
-        <p class="text-[11px] text-zinc-400">Right-click the board to add items. Double-click for a note.</p>
+        <p class="px-6 text-[13px]">Drop files or folders, or paste images, text and links</p>
+        <p class="max-w-sm px-6 text-[11px] leading-relaxed text-zinc-400">Double-click empty space for a note. Right-click for more.</p>
       </div>
     {/if}
   </div>
@@ -972,6 +1060,7 @@
     display: flex;
     height: 2rem;
     width: 2rem;
+    flex-shrink: 0;
     align-items: center;
     justify-content: center;
     border-radius: 999px;

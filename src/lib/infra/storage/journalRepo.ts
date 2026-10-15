@@ -15,6 +15,7 @@ function decode(raw: unknown): Library {
   if (raw == null) return { boards: [] };
   if (typeof raw !== 'object' || !Array.isArray((raw as Library).boards)) throw new Error('The saved library is damaged. Its original file has been preserved.');
   const library = raw as Library;
+  if (library.tagDefinitions !== undefined && (!Array.isArray(library.tagDefinitions) || library.tagDefinitions.some(tag => !tag || typeof tag.name !== 'string' || typeof tag.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(tag.color)))) throw new Error('The saved tag definitions are damaged. The original file has been preserved.');
   const ids = new Set<string>();
   for (const board of library.boards) {
     if (!board || typeof board.id !== 'string' || !board.id || ids.has(board.id) ||

@@ -69,7 +69,7 @@
         role="menuitem"
         onclick={() => run(item)}
       >
-        <i class="{item.icon ?? 'bx bx-right-arrow-alt'} text-base {item.disabled || item.destructive ? '' : 'text-white'}"></i>
+        {#if item.emoji}<span class="flex w-4 shrink-0 items-center justify-center text-base" aria-hidden="true">{item.emoji}</span>{:else}<i class="{item.icon ?? 'bx bx-right-arrow-alt'} text-base {item.disabled || item.destructive ? '' : 'text-white'}"></i>{/if}
         <span class="truncate">{item.label}</span>
       </button>
     {/each}

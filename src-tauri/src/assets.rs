@@ -104,3 +104,45 @@ mod tests {
         fs::remove_dir_all(base).unwrap();
     }
 }
+
+/// Prepare a named copy without moving or exposing the app's original asset.
+#[tauri::command]
+pub async fn prepare_export(app: AppHandle, name: String, path: Option<String>, data: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
+        let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("exports").join(format!("{stamp}-{id}"));
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let name = sanitize(&name);
+        let name = if name == "." || name == ".." { "file".to_string() } else { name };
+        let output = dir.join(name);
+        if let Some(path) = path {
+            let root = app.path().app_data_dir().map_err(|e| e.to_string())?.join("assets").canonicalize().map_err(|e| e.to_string())?;
+            let source = std::path::PathBuf::from(path).canonicalize().map_err(|e| e.to_string())?;
+            if source.parent() != Some(root.as_path()) { return Err("Only Board assets can be exported".into()); }
+            fs::copy(source, &output).map_err(|e| e.to_string())?;
+        } else {
+            let bytes = base64::engine::general_purpose::STANDARD.decode(data.ok_or("Export data is missing")?).map_err(|e| e.to_string())?;
+            fs::write(&output, bytes).map_err(|e| e.to_string())?;
+        }
+        Ok(output.to_string_lossy().to_string())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn copy_export_files(app: AppHandle, paths: Vec<String>) -> Result<(), String> {
+    let root = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("exports").canonicalize().map_err(|e| e.to_string())?;
+    if paths.is_empty() { return Err("No files selected".into()); }
+    for path in &paths {
+        let candidate = std::path::PathBuf::from(path).canonicalize().map_err(|e| e.to_string())?;
+        if !candidate.starts_with(&root) || !candidate.is_file() { return Err("Only prepared Board exports can be copied".into()); }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use clipboard_win::Setter;
+        let _clipboard = clipboard_win::Clipboard::new_attempts(10).map_err(|e| e.to_string())?;
+        clipboard_win::formats::FileList.write_clipboard(paths.as_slice()).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    { Err("File copying currently supports Windows only".into()) }
+}

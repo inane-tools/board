@@ -25,3 +25,9 @@ describe('library persistence', () => {
     expect(localStorage.getItem('journal.library.v3')).toBe(raw);
   });
 });
+
+it('round trips shared tag colors without dropping board assignments', async () => {
+  const home = makeBoard('canvas', null); home.tags = ['work'];
+  const library = { boards: [home], tagDefinitions: [{ name: 'work', color: '#60a5fa' }] };
+  await saveLibrary(library); expect(await loadLibrary()).toEqual(library);
+});

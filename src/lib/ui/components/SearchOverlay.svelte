@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TagChips from './TagChips.svelte';
   import { dialogFocus } from '$lib/ui/actions/dialogFocus';
   import { tick } from 'svelte';
   import { fade, fly } from '$lib/ui/transitions';
@@ -66,8 +67,8 @@
   }
 
   function search(boards: Board[], raw: string): Result[] {
-    const tags = [...raw.matchAll(/@([\w-]+)/g)].map((m) => m[1].toLowerCase());
-    const text = raw.replace(/@[\w-]+/g, ' ').trim().toLowerCase();
+    const tags = [...raw.matchAll(/@([\p{L}\p{N}_-]+)/gu)].map((m) => m[1].toLowerCase());
+    const text = raw.replace(/@[\p{L}\p{N}_-]+/gu, ' ').trim().toLowerCase();
     if (!tags.length && !text) return [];
 
     const out: Result[] = [];
@@ -108,7 +109,7 @@
   $: tags = allTags($boardsStore);
   $: results = search($boardsStore, query);
   $: if (selected >= results.length) selected = 0;
-  $: plainQuery = query.replace(/@[\w-]+/g, '').trim().toLowerCase();
+  $: plainQuery = query.replace(/@[\p{L}\p{N}_-]+/gu, '').trim().toLowerCase();
   $: tagSuggestions = plainQuery ? tags.filter((t) => t.toLowerCase().includes(plainQuery)).slice(0, 8) : [];
 
   let wasOpen = false;
@@ -185,7 +186,7 @@
         {#if tags.length}
           <div class="flex flex-wrap gap-1.5 rounded-2xl bg-[var(--color-popover)] p-3 shadow-[0_24px_60px_rgba(0,0,0,0.7)]">
             {#each tags as tag (tag)}
-              <button class="rounded-full bg-white/[0.06] px-2.5 py-1 text-[11px] text-[var(--color-accent2)] transition-colors hover:bg-white/[0.12]" onclick={() => (query = `@${tag}`)}>@{tag}</button>
+              <button class="rounded-full outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]" onclick={() => (query = `@${tag}`)}><TagChips tags={[tag]} /></button>
             {/each}
           </div>
         {/if}
@@ -194,7 +195,7 @@
           {#if tagSuggestions.length}
             <div class="flex shrink-0 flex-wrap gap-1.5 border-b border-white/[0.06] px-3 py-2">
               {#each tagSuggestions as tag (tag)}
-                <button class="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-[var(--color-accent2)] transition-colors hover:bg-white/[0.12]" onclick={() => (query = `@${tag}`)}>@{tag}</button>
+                <button class="rounded-full outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]" onclick={() => (query = `@${tag}`)}>@{tag}</button>
               {/each}
             </div>
           {/if}
@@ -227,10 +228,8 @@
                     {#if result.snippet}
                       <span class="mt-0.5 block truncate text-[11px] text-zinc-500">{result.snippet}</span>
                     {/if}
-                    {#if result.item?.tags?.length}
-                      <span class="mt-0.5 flex flex-wrap gap-1">
-                        {#each result.item.tags as tag (tag)}<span class="rounded bg-white/[0.06] px-1 text-[9px] text-[var(--color-accent2)]">@{tag}</span>{/each}
-                      </span>
+                    {#if (result.item?.tags ?? result.board.tags)?.length}
+                      <span class="mt-1 block"><TagChips tags={result.item?.tags ?? result.board.tags ?? []} /></span>
                     {/if}
                   </span>
                   {#if !result.item && result.board.parentId}

@@ -105,7 +105,10 @@ export interface Board {
   updatedAt: number;
 }
 
+export interface TagDefinition { name: string; color: string; }
+
 export interface Library {
+  tagDefinitions?: TagDefinition[];
   boards: Board[];
 }
 

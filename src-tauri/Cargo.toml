@@ -10,18 +10,21 @@ rust-version = "1.77"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "image-png", "image-ico", "devtools"] }
-tauri-plugin-store = "2"
-tauri-plugin-single-instance = "2"
-tauri-plugin-opener = "2"
+tauri = { version = "~2.11", features = ["protocol-asset", "image-png", "image-ico", "devtools"] }
+tauri-plugin-store = "~2.4"
+tauri-plugin-drag = "~2.1"
+tauri-plugin-clipboard-manager = "~2.3"
+tauri-plugin-single-instance = "~2.4"
+tauri-plugin-opener = "~2.5"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 reqwest = "0.12"
 regex = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util"] }
 [target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win = "5"
 # WebView2 COM interface used to trim memory while the window is not in use
 # (see `webview_memory.rs`); version kept in step with Tauri's own webview2-com.
 webview2-com = "0.38"

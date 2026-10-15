@@ -455,3 +455,11 @@ html.journal-linux-window .journal-range::-webkit-slider-thumb {
     scroll-behavior: auto !important;
   }
 }
+
+/* Canvas defaults follow the theme. The optional accent mix is applied separately. */
+:root { --board-canvas: #1c1c1c; --board-note-color-strength: 80%; --board-grid: rgba(255,255,255,0.06); }
+html.light { --board-canvas: #f4f4f5; --board-note-color-strength: 18%; --board-grid: rgba(0,0,0,0.1); }
+.board-titlebar::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(to bottom, var(--board-titlebar-background) 0%, color-mix(in srgb, var(--board-titlebar-background) 90%, transparent) 40%, transparent 100%);
+}
