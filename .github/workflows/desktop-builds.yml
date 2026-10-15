@@ -1,0 +1,48 @@
+name: Windows builds
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main, 'codex/**']
+permissions:
+  contents: read
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+  installer:
+    needs: checks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: npm ci
+      - run: npm run build
+        env:
+          TAURI_ENV_PLATFORM: windows
+      - run: cargo test --release --locked --manifest-path src-tauri/Cargo.toml
+      - run: npm run tauri -- build --config src-tauri/tauri.ci.conf.json --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: board-windows-x64
+          compression-level: 0
+          if-no-files-found: error
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe

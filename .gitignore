@@ -1,0 +1,40 @@
+# deps / build
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# tauri
+src-tauri/target/
+src-tauri/gen/
+packaging/flatpak/payload/
+packaging/flatpak/build/
+packaging/flatpak/repo/
+packaging/flatpak/out/
+.flatpak-builder/
+packaging/flatpak/.flatpak-builder/
+
+# svelte / vite
+.svelte-kit/
+vite.config.*.timestamp*
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Local artwork exports and secrets
+/Frame *.png
+/logo.png
+.env
+.env.*
+!.env.example
+*.log
+
+# Unused mobile and Windows Store artwork
+src-tauri/icons/android/
+src-tauri/icons/ios/
+src-tauri/icons/Square*Logo.png
+src-tauri/icons/StoreLogo.png
